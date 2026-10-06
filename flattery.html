@@ -6,38 +6,48 @@
 <title>動物当てゲーム</title>
 <!--
   ============================================================
-  お世辞実験（Fogg & Nass, 1997 "Silicon sycophants" の簡易版）
+  お世辞実験（Fogg & Nass, 1997 "Silicon sycophants" の簡易版・2条件）
   ------------------------------------------------------------
-  条件（ランダム割り付け, 1/3ずつ）
-    sincere  : 「評価はあなたの質問を分析したもの」と教示 → 褒めコメント
-    flattery : 「評価はランダムで、質問内容とは無関係」と教示 → 同じ褒めコメント
-    generic  : 評価なし（「回答を記録しました」のみ）
-  ※ sincere と flattery で表示される褒め言葉は同一。違うのは教示だけ。
+  条件（ランダム割り付け, 1/2ずつ）
+    flattery : 「コメントはランダムで質問とは無関係」と教示したうえで、大きな褒めコメントが出る
+    generic  : 毎回、同じ大きさの枠に「回答を記録しました」とだけ出る
+  （Fogg & Nass, 1997 の flattery 条件 vs generic 条件に相当）
 
-  デモ用：URL に ?c=sincere / ?c=flattery / ?c=generic を付けると条件を固定
+  デモ用：URL に ?c=flattery / ?c=generic を付けると条件を固定
+
   データ送信：下の GAS_URL に Google Apps Script のウェブアプリURLを入れる。
-    空のままなら、最後に結果文字列のコピーとCSVダウンロードを表示。
-
-  ---- Google Apps Script（スプレッドシートに紐づけて「ウェブアプリ」としてデプロイ）----
+  ---- Google Apps Script（スプレッドシート →拡張機能→Apps Script に貼る）----
+  const COLS = ["timestamp","student_id","condition","target","guess","correct",
+    "enjoy","self","correct_conf","compet","like","again","based",
+    "check","check_ok","questions","answers","mean_rt_ms","total_sec","ua"];
   function doPost(e) {
-    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-    const d = JSON.parse(e.postData.contents);
-    if (sh.getLastRow() === 0) sh.appendRow(Object.keys(d));
-    sh.appendRow(Object.values(d));
+    const lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try {
+      const sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+      const d = JSON.parse(e.postData.contents);
+      if (sh.getLastRow() === 0) sh.appendRow(COLS);
+      sh.appendRow(COLS.map(k => d[k] ?? ""));
+    } finally { lock.releaseLock(); }
     return ContentService.createTextOutput("ok");
   }
-  （アクセスできるユーザー：全員）
+  デプロイ → 新しいデプロイ → ウェブアプリ
+    （次のユーザーとして実行：自分／アクセスできるユーザー：全員）
   ============================================================
 -->
 <style>
   :root{
     --bg:#f6f4ef; --card:#ffffff; --ink:#22231f; --sub:#6b6b63; --line:#dedbd2;
     --accent:#2f6f5e; --accent-ink:#ffffff; --soft:#e8f1ed; --warn:#9a4a2b;
+    --praise-bg:#fff4c7; --praise-line:#f0b429; --praise-ink:#5a3d00;
+    --plain-bg:#eceae4; --plain-line:#c9c6bc; --plain-ink:#44443f;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --bg:#1b1c1a; --card:#262724; --ink:#ecebe6; --sub:#a3a29a; --line:#3a3b37;
       --accent:#6fb59e; --accent-ink:#10201b; --soft:#23332d; --warn:#e09a7b;
+      --praise-bg:#3a3010; --praise-line:#e0a92a; --praise-ink:#ffe7a3;
+      --plain-bg:#2e2f2b; --plain-line:#4a4b46; --plain-ink:#d6d5cf;
     }
   }
   *{box-sizing:border-box}
@@ -60,8 +70,21 @@
   .robot{display:flex;gap:12px;align-items:flex-start;margin:14px 0}
   .face{flex:0 0 44px;height:44px;border-radius:10px;background:var(--soft);display:grid;place-items:center;font-size:1.5rem}
   .bubble{background:var(--soft);border-radius:12px;padding:10px 14px;flex:1}
-  .answer{font-weight:700;font-size:1.1rem}
-  .praise{margin-top:6px}
+
+  /* ---- 回答＋コメント ---- */
+  .qtext{color:var(--sub);margin:0 0 6px}
+  .answer{font-weight:800;font-size:1.6rem;margin:2px 0 14px}
+  .comment{position:relative;border-radius:18px;padding:22px 18px 22px;text-align:center;
+    animation:pop .45s cubic-bezier(.2,1.4,.4,1) both}
+  .comment .who{font-size:2.6rem;line-height:1;margin-bottom:10px}
+  .comment .msg{font-size:1.75rem;font-weight:800;line-height:1.45;letter-spacing:.01em;word-break:auto-phrase;text-wrap:balance}
+  @media (max-width:420px){ .comment .msg{font-size:1.45rem} }
+  .comment.praise{background:var(--praise-bg);border:3px solid var(--praise-line);color:var(--praise-ink)}
+  .comment.plain{background:var(--plain-bg);border:3px solid var(--plain-line);color:var(--plain-ink)}
+  @keyframes pop{0%{transform:scale(.6);opacity:0}100%{transform:scale(1);opacity:1}}
+  @media (prefers-reduced-motion: reduce){ .comment{animation:none} }
+  .nxwrap{margin-top:18px}
+
   .progress{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:4px 0 14px}
   .progress > div{height:100%;background:var(--accent);transition:width .3s}
   .hist{font-size:.88rem;color:var(--sub);margin:0;padding-left:1.2em}
@@ -87,7 +110,7 @@
 
 <script>
 // ===== 設定 =====
-const GAS_URL = "https://script.google.com/macros/s/AKfycbymXGe5QeyAr6tkjIgMlAjPx_gUOAunIbSTKQvM6SB3jNGcgJw3NTppT3akwC5xYjMYWA/exec";          // ← Google Apps Script のURL（空ならローカル保存のみ）
+const GAS_URL = "";          // ← Google Apps Script のURL（空ならローカル保存のみ）
 const N_ROUNDS = 8;          // 質問回数
 const N_CHOICES = 3;         // 1ラウンドに提示する質問の数
 
@@ -130,30 +153,29 @@ const A = {
 const EMOJI = {"イヌ":"🐕","ネコ":"🐈","ウサギ":"🐇","ゾウ":"🐘","シマウマ":"🦓","キリン":"🦒","ライオン":"🦁",
   "イルカ":"🐬","クジラ":"🐋","コウモリ":"🦇","ペンギン":"🐧","ワシ":"🦅","フクロウ":"🦉","サメ":"🦈","ヘビ":"🐍","カエル":"🐸"};
 
-// 褒めコメント（sincere / flattery 共通）
+// 褒めコメント
 const PRAISE = [
-  "とても鋭い質問です。候補をうまく絞り込めています。",
-  "効率のよい質問の選び方です。論理的な思考ができていますね。",
-  "見事な戦略です。情報量の多い質問を選んでいます。",
-  "素晴らしい判断です。答えに着実に近づいています。",
-  "よく考えられた質問です。センスを感じます。",
-  "理想的な質問です。多くの人はこの質問を思いつきません。",
-  "的確です。これまでの答えをうまく活かしています。",
-  "非常に良い選択です。推理の筋道がしっかりしています。",
+  "とても鋭い質問です！<br>候補をうまく絞り込めています。",
+  "効率のよい質問の選び方です！<br>論理的な思考ができていますね。",
+  "見事な戦略です！<br>情報量の多い質問を選んでいます。",
+  "素晴らしい判断です！<br>答えに着実に近づいています。",
+  "よく考えられた質問です！<br>センスを感じます。",
+  "理想的な質問です！<br>なかなか思いつけない一手です。",
+  "的確です！<br>これまでの答えをうまく活かしています。",
+  "非常に良い選択です！<br>推理の筋道がしっかりしています。",
 ];
-const GENERIC = "回答を記録しました。次の質問へ進んでください。";
+const GENERIC = "回答を記録しました。<br>次へ進んでください。";
 
 const INSTR = {
-  sincere:  "このコンピュータは、あなたが選んだ質問が答えの絞り込みにどれだけ役立つかを<b>分析し</b>、その結果にもとづいて評価コメントを返します。",
-  flattery: "質問のあとに評価コメントが表示されますが、コメントは<b>あらかじめ用意された文からランダムに選ばれたもの</b>で、あなたの質問の内容とは<b>関係ありません</b>。",
-  generic:  "質問のあとに、次へ進むための案内が表示されます。",
+  flattery: "質問をするたびに、コンピュータが答えを返し、あわせてコメントを表示します。<br>ただしコメントは<b>あらかじめ用意された文からランダムに選ばれたもの</b>で、あなたの質問の内容とは<b>まったく関係ありません</b>。",
+  generic:  "質問をするたびに、コンピュータが答えを返し、次へ進むための案内を表示します。",
 };
 
 // ===== 状態 =====
 const params = new URLSearchParams(location.search);
-const CONDS = ["sincere","flattery","generic"];
+const CONDS = ["flattery","generic"];
 const S = {
-  cond: CONDS.includes(params.get("c")) ? params.get("c") : CONDS[Math.floor(Math.random()*3)],
+  cond: CONDS.includes(params.get("c")) ? params.get("c") : CONDS[Math.floor(Math.random()*CONDS.length)],
   id:"", target:"", round:0, asked:[], hist:[], options:[], praiseBag:[],
   guess:"", t0:0, tStart:0, ratings:{}, check:"",
 };
@@ -162,7 +184,7 @@ S.target = animals[Math.floor(Math.random()*animals.length)];
 const shuffle = a => { a=[...a]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]} return a; };
 S.praiseBag = shuffle(PRAISE);
 const app = document.getElementById("app");
-const h = s => app.innerHTML = s;
+const h = s => { app.innerHTML = s; window.scrollTo(0,0); };
 
 // ===== 画面 =====
 function screenStart(){
@@ -171,7 +193,7 @@ function screenStart(){
     <p>コンピュータが心の中で1つの動物を選んでいます。あなたは「はい／いいえ」で答えられる質問を${N_ROUNDS}回して、その動物を当ててください。</p>
     <p>毎回、3つの質問の中から1つを選んで聞きます。なるべく答えを絞り込めそうな質問を選んでください。</p>
     <p style="margin-top:16px">学籍番号</p>
-    <input type="text" id="sid" autocomplete="off" inputmode="text" placeholder="例：A123456">
+    <input type="text" id="sid" autocomplete="off" placeholder="例：A123456">
     <p class="err hidden" id="err">学籍番号を入力してください。</p>
     <p style="margin-top:16px"><button class="primary" id="go">次へ</button></p>
   </div>`);
@@ -184,7 +206,7 @@ function screenStart(){
 
 function screenInstr(){
   h(`<div class="card">
-    <h2>コンピュータからのコメントについて</h2>
+    <h2>ゲームの進め方</h2>
     <div class="robot"><div class="face">🖥️</div><div class="bubble">${INSTR[S.cond]}</div></div>
     <p class="sub">この説明はあとで確認の質問があります。よく読んでから始めてください。</p>
     <p><button class="primary" id="go">ゲームを始める</button></p>
@@ -213,17 +235,20 @@ function renderRound(fb){
   if(!fb){
     body = `<h2>質問 ${S.round+1} / ${N_ROUNDS}</h2>
       <p class="sub">どれを聞きますか？</p>
-      ${S.options.map((q,i)=>`<button class="qbtn" data-i="${i}">${q.t}</button>`).join("")}`;
+      ${S.options.map((q,i)=>`<button class="qbtn" data-i="${i}">${q.t}</button>`).join("")}
+      ${histHTML()}`;
   } else {
+    const isPraise = S.cond === "flattery";
     body = `<h2>質問 ${S.round} / ${N_ROUNDS}</h2>
-      <p>${fb.q}</p>
-      <div class="robot"><div class="face">🖥️</div><div class="bubble">
-        <div class="answer">${fb.a ? "はい" : "いいえ"}</div>
-        <div class="praise">${fb.c}</div>
-      </div></div>
-      <button class="primary" id="nx">${S.round>=N_ROUNDS ? "答えを選ぶ" : "次の質問へ"}</button>`;
+      <p class="qtext">${fb.q}</p>
+      <div class="answer">答え：${fb.a ? "はい" : "いいえ"}</div>
+      <div class="comment ${isPraise ? "praise" : "plain"}">
+        <div class="who">${isPraise ? "🖥️✨" : "🖥️"}</div>
+        <div class="msg">${fb.c}</div>
+      </div>
+      <div class="nxwrap"><button class="primary" id="nx">${S.round>=N_ROUNDS ? "答えを選ぶ" : "次の質問へ"}</button></div>`;
   }
-  h(`<div class="card"><div class="progress"><div style="width:${pct}%"></div></div>${body}${histHTML()}</div>`);
+  h(`<div class="card"><div class="progress"><div style="width:${pct}%"></div></div>${body}</div>`);
   if(!fb){
     app.querySelectorAll(".qbtn").forEach(b => b.onclick = () => ask(S.options[+b.dataset.i]));
   } else {
@@ -259,13 +284,13 @@ function screenGuess(){
 }
 
 const ITEMS = [
-  {k:"enjoy",   t:"このゲームは楽しかった"},
-  {k:"self",    t:"自分はこのゲームでうまくやれたと思う"},
-  {k:"correct", t:"自分の答えは正解していると思う"},
-  {k:"compet",  t:"このコンピュータは有能だと思う"},
-  {k:"like",    t:"このコンピュータに好感をもった"},
-  {k:"again",   t:"このコンピュータとまた遊びたい"},
-  {k:"based",   t:"コンピュータのコメントは、自分の質問の内容にもとづいていたと思う"},
+  {k:"enjoy",        t:"このゲームは楽しかった"},
+  {k:"self",         t:"自分はこのゲームでうまくやれたと思う"},
+  {k:"correct_conf", t:"自分の答えは正解していると思う"},
+  {k:"compet",       t:"このコンピュータは有能だと思う"},
+  {k:"like",         t:"このコンピュータに好感をもった"},
+  {k:"again",        t:"このコンピュータとまた遊びたい"},
+  {k:"based",        t:"コンピュータのコメントは、自分の質問の内容にもとづいていたと思う"},
 ];
 
 function screenQ(){
@@ -276,9 +301,9 @@ function screenQ(){
       <div class="scale">${[1,2,3,4,5,6,7].map(v=>`<label><input type="radio" name="${it.k}" value="${v}">${v}</label>`).join("")}</div>
       <div class="ends"><span>まったくあてはまらない</span><span>とてもあてはまる</span></div></div>`).join("")}
     <div class="item"><div>最初の説明では、コンピュータのコメントはどういうものだと書かれていましたか？</div>
-      <label class="opt"><input type="radio" name="check" value="sincere">質問を分析した評価</label>
-      <label class="opt"><input type="radio" name="check" value="flattery">質問とは関係ないランダムなコメント</label>
-      <label class="opt"><input type="radio" name="check" value="generic">評価はなく、次へ進む案内だけ</label>
+      <label class="opt"><input type="radio" name="check" value="flattery">質問とは関係ない、ランダムに選ばれたコメント</label>
+      <label class="opt"><input type="radio" name="check" value="generic">次へ進むための案内だけ</label>
+      <label class="opt"><input type="radio" name="check" value="analyzed">質問の内容を分析した評価</label>
     </div>
     <p class="err hidden" id="err">すべての項目に回答してください。</p>
     <p><button class="primary" id="go">送信する</button></p>
@@ -315,33 +340,30 @@ function record(){
 function finish(){
   const d = record();
   const ok = d.correct === 1;
-  const reveal = `<div class="card">
+  h(`<div class="card">
     <h2>${ok ? "正解！" : "残念…"}</h2>
     <p>コンピュータが選んでいたのは <b>${EMOJI[S.target]} ${S.target}</b> でした。${ok?"":`（あなたの答え：${S.guess}）`}</p>
-    <p class="sub" id="status">送信中…</p>
-    <div id="local"></div>
-  </div>`;
-  h(reveal);
-  const status = document.getElementById("status");
-  const showLocal = (msg) => {
-    status.textContent = msg;
-    const keys = Object.keys(d);
-    const csv = keys.join(",") + "\n" + keys.map(k=>`"${String(d[k]).replace(/"/g,'""')}"`).join(",");
-    document.getElementById("local").innerHTML =
-      `<p class="sub">以下の結果を先生の指示にしたがって提出してください。</p>
-       <textarea rows="5" readonly>${JSON.stringify(d)}</textarea>
-       <p><button id="cp">コピー</button> <button id="dl">CSVを保存</button></p>`;
-    document.getElementById("cp").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(d));
-    document.getElementById("dl").onclick = () => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));
-      a.download = `flattery_${S.id}.csv`; a.click();
-    };
+    <p class="sub" id="status">${GAS_URL ? "送信中…" : "（送信先が未設定です）"}</p>
+    <details style="margin-top:14px">
+      <summary class="sub">うまく送信できなかったときはこちら</summary>
+      <p class="sub">以下の結果を先生の指示にしたがって提出してください。</p>
+      <textarea rows="5" readonly>${JSON.stringify(d)}</textarea>
+      <p><button id="cp">コピー</button> <button id="dl">CSVを保存</button></p>
+    </details>
+  </div>`);
+  const keys = Object.keys(d);
+  const csv = keys.join(",") + "\n" + keys.map(k=>`"${String(d[k]).replace(/"/g,'""')}"`).join(",");
+  document.getElementById("cp").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(d));
+  document.getElementById("dl").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv"}));
+    a.download = `flattery_${S.id}.csv`; a.click();
   };
-  if(!GAS_URL){ showLocal("（送信先が未設定です）"); return; }
+  if(!GAS_URL){ document.querySelector("details").open = true; return; }
+  const status = document.getElementById("status");
   fetch(GAS_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(d)})
     .then(() => { status.textContent = "送信しました。ご協力ありがとうございました。"; })
-    .catch(() => showLocal("送信に失敗しました。"));
+    .catch(() => { status.textContent = "送信に失敗しました。下の「うまく送信できなかったとき」から提出してください。"; document.querySelector("details").open = true; });
 }
 
 screenStart();

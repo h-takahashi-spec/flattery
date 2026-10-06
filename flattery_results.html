@@ -164,7 +164,7 @@
 
 <script>
 // ===== 設定 =====
-const API_URL = "https://script.google.com/macros/s/AKfycbymXGe5QeyAr6tkjIgMlAjPx_gUOAunIbSTKQvM6SB3jNGcgJw3NTppT3akwC5xYjMYWA/exec";   // ← Apps Script のウェブアプリURL（flattery.html の GAS_URL と同じ）
+const API_URL = "";   // ← Apps Script のウェブアプリURL（flattery.html の GAS_URL と同じ）
 const REFRESH_MS = 15000;
 
 const ITEMS = [
@@ -253,7 +253,7 @@ function render(rows){
   $("tiles").innerHTML = `
     <div class="tile"><div class="k">回答者数</div><div class="v">${valid.length}</div><div class="s">${onlyOk?"確認問題 正解者のみ":"全員"}</div></div>
     ${COND.map(c=>`<div class="tile"><div class="k"><i class="sw" style="background:${c.c}"></i>${c.t}</div><div class="v">${by[c.k].length}<span style="font-size:1rem;font-weight:500"> 人</span></div><div class="s">正解率 ${corr(c.k)}</div></div>`).join("")}
-    <div class="tile"><div class="k">確認問題の正答率</div><div class="v">${chk}</div><div class="s">お世辞の有無に気づいた割合</div></div>`;
+    <div class="tile"><div class="k">確認問題の正答率</div><div class="v">${chk}</div><div class="s">説明を正しく読めていた割合</div></div>`;
 
   // hero: コンピュータへの評価（3項目平均）
   const comp = c => by[c].map(r => mean(COMPUTER.map(k=>+r[k])));
