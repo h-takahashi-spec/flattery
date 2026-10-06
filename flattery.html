@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>動物当てゲーム</title>
+<!--
+  ============================================================
+  お世辞実験（Fogg & Nass, 1997 "Silicon sycophants" の簡易版）
+  ------------------------------------------------------------
+  条件（ランダム割り付け, 1/3ずつ）
+    sincere  : 「評価はあなたの質問を分析したもの」と教示 → 褒めコメント
+    flattery : 「評価はランダムで、質問内容とは無関係」と教示 → 同じ褒めコメント
+    generic  : 評価なし（「回答を記録しました」のみ）
+  ※ sincere と flattery で表示される褒め言葉は同一。違うのは教示だけ。
+
+  デモ用：URL に ?c=sincere / ?c=flattery / ?c=generic を付けると条件を固定
+  データ送信：下の GAS_URL に Google Apps Script のウェブアプリURLを入れる。
+    空のままなら、最後に結果文字列のコピーとCSVダウンロードを表示。
+
+  ---- Google Apps Script（スプレッドシートに紐づけて「ウェブアプリ」としてデプロイ）----
+  function doPost(e) {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    const d = JSON.parse(e.postData.contents);
+    if (sh.getLastRow() === 0) sh.appendRow(Object.keys(d));
+    sh.appendRow(Object.values(d));
+    return ContentService.createTextOutput("ok");
+  }
+  （アクセスできるユーザー：全員）
+  ============================================================
+-->
+<style>
+  :root{
+    --bg:#f6f4ef; --card:#ffffff; --ink:#22231f; --sub:#6b6b63; --line:#dedbd2;
+    --accent:#2f6f5e; --accent-ink:#ffffff; --soft:#e8f1ed; --warn:#9a4a2b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1c1a; --card:#262724; --ink:#ecebe6; --sub:#a3a29a; --line:#3a3b37;
+      --accent:#6fb59e; --accent-ink:#10201b; --soft:#23332d; --warn:#e09a7b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Hiragino Sans","Noto Sans JP","Yu Gothic",system-ui,sans-serif;line-height:1.7}
+  .wrap{max-width:640px;margin:0 auto;padding:24px 16px 64px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 20px;margin-bottom:16px}
+  h1{font-size:1.35rem;margin:0 0 8px}
+  h2{font-size:1.1rem;margin:0 0 10px}
+  p{margin:.5em 0}
+  .sub{color:var(--sub);font-size:.9rem}
+  button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink);padding:10px 14px}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  button:disabled{opacity:.4;cursor:default}
+  .qbtn{display:block;width:100%;text-align:left;margin:8px 0;padding:12px 14px}
+  .qbtn:hover:not(:disabled){border-color:var(--accent)}
+  input[type=text]{font:inherit;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--bg);color:var(--ink)}
+  .robot{display:flex;gap:12px;align-items:flex-start;margin:14px 0}
+  .face{flex:0 0 44px;height:44px;border-radius:10px;background:var(--soft);display:grid;place-items:center;font-size:1.5rem}
+  .bubble{background:var(--soft);border-radius:12px;padding:10px 14px;flex:1}
+  .answer{font-weight:700;font-size:1.1rem}
+  .praise{margin-top:6px}
+  .progress{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:4px 0 14px}
+  .progress > div{height:100%;background:var(--accent);transition:width .3s}
+  .hist{font-size:.88rem;color:var(--sub);margin:0;padding-left:1.2em}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  @media (max-width:420px){.grid{grid-template-columns:repeat(3,1fr)}}
+  .grid button{padding:12px 4px}
+  .grid button.sel{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .item{margin:18px 0}
+  .scale{display:flex;justify-content:space-between;gap:4px;margin-top:6px}
+  .scale label{flex:1;text-align:center;font-size:.85rem;cursor:pointer}
+  .scale input{display:block;margin:0 auto 2px;width:20px;height:20px;accent-color:var(--accent)}
+  .ends{display:flex;justify-content:space-between;font-size:.78rem;color:var(--sub)}
+  .opt{display:block;margin:6px 0;cursor:pointer}
+  .opt input{accent-color:var(--accent);margin-right:6px}
+  textarea{width:100%;font:.8rem/1.4 monospace;padding:8px;border:1px solid var(--line);border-radius:8px;
+    background:var(--bg);color:var(--ink)}
+  .err{color:var(--warn);font-size:.9rem}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script>
+// ===== 設定 =====
+const GAS_URL = "https://script.google.com/macros/s/AKfycbymXGe5QeyAr6tkjIgMlAjPx_gUOAunIbSTKQvM6SB3jNGcgJw3NTppT3akwC5xYjMYWA/exec";          // ← Google Apps Script のURL（空ならローカル保存のみ）
+const N_ROUNDS = 8;          // 質問回数
+const N_CHOICES = 3;         // 1ラウンドに提示する質問の数
+
+// ===== 動物と属性 =====
+const Q = [
+  {k:"mammal", t:"それは哺乳類ですか？"},
+  {k:"bird",   t:"それは鳥のなかまですか？"},
+  {k:"fly",    t:"それは空を飛びますか？"},
+  {k:"sea",    t:"それは海で暮らしていますか？"},
+  {k:"big",    t:"それは大人の人間より大きいですか？"},
+  {k:"huge",   t:"それはバスより大きいですか？"},
+  {k:"pet",    t:"それはペットとして飼われることが多いですか？"},
+  {k:"herb",   t:"それは主に草や葉っぱを食べますか？"},
+  {k:"legs4",  t:"それは足が4本ありますか？"},
+  {k:"nolegs", t:"それは足がありませんか？"},
+  {k:"savanna",t:"それはアフリカのサバンナにいますか？"},
+  {k:"neck",   t:"それは首がとても長いですか？"},
+  {k:"climb",  t:"それは木登りが得意ですか？"},
+  {k:"stripe", t:"それはしま模様がありますか？"},
+  {k:"night",  t:"それは夜に活動することで知られていますか？"},
+];
+const A = {
+  "イヌ":    {mammal:1,pet:1,legs4:1},
+  "ネコ":    {mammal:1,pet:1,legs4:1,climb:1},
+  "ウサギ":  {mammal:1,pet:1,herb:1,legs4:1},
+  "ゾウ":    {mammal:1,big:1,herb:1,legs4:1,savanna:1},
+  "シマウマ":{mammal:1,big:1,herb:1,legs4:1,savanna:1,stripe:1},
+  "キリン":  {mammal:1,big:1,herb:1,legs4:1,savanna:1,neck:1},
+  "ライオン":{mammal:1,big:1,legs4:1,savanna:1},
+  "イルカ":  {mammal:1,sea:1,big:1,nolegs:1},
+  "クジラ":  {mammal:1,sea:1,big:1,huge:1,nolegs:1},
+  "コウモリ":{mammal:1,fly:1,night:1},
+  "ペンギン":{bird:1,sea:1},
+  "ワシ":    {bird:1,fly:1},
+  "フクロウ":{bird:1,fly:1,night:1},
+  "サメ":    {sea:1,big:1,nolegs:1},
+  "ヘビ":    {nolegs:1},
+  "カエル":  {legs4:1},
+};
+const EMOJI = {"イヌ":"🐕","ネコ":"🐈","ウサギ":"🐇","ゾウ":"🐘","シマウマ":"🦓","キリン":"🦒","ライオン":"🦁",
+  "イルカ":"🐬","クジラ":"🐋","コウモリ":"🦇","ペンギン":"🐧","ワシ":"🦅","フクロウ":"🦉","サメ":"🦈","ヘビ":"🐍","カエル":"🐸"};
+
+// 褒めコメント（sincere / flattery 共通）
+const PRAISE = [
+  "とても鋭い質問です。候補をうまく絞り込めています。",
+  "効率のよい質問の選び方です。論理的な思考ができていますね。",
+  "見事な戦略です。情報量の多い質問を選んでいます。",
+  "素晴らしい判断です。答えに着実に近づいています。",
+  "よく考えられた質問です。センスを感じます。",
+  "理想的な質問です。多くの人はこの質問を思いつきません。",
+  "的確です。これまでの答えをうまく活かしています。",
+  "非常に良い選択です。推理の筋道がしっかりしています。",
+];
+const GENERIC = "回答を記録しました。次の質問へ進んでください。";
+
+const INSTR = {
+  sincere:  "このコンピュータは、あなたが選んだ質問が答えの絞り込みにどれだけ役立つかを<b>分析し</b>、その結果にもとづいて評価コメントを返します。",
+  flattery: "質問のあとに評価コメントが表示されますが、コメントは<b>あらかじめ用意された文からランダムに選ばれたもの</b>で、あなたの質問の内容とは<b>関係ありません</b>。",
+  generic:  "質問のあとに、次へ進むための案内が表示されます。",
+};
+
+// ===== 状態 =====
+const params = new URLSearchParams(location.search);
+const CONDS = ["sincere","flattery","generic"];
+const S = {
+  cond: CONDS.includes(params.get("c")) ? params.get("c") : CONDS[Math.floor(Math.random()*3)],
+  id:"", target:"", round:0, asked:[], hist:[], options:[], praiseBag:[],
+  guess:"", t0:0, tStart:0, ratings:{}, check:"",
+};
+const animals = Object.keys(A);
+S.target = animals[Math.floor(Math.random()*animals.length)];
+const shuffle = a => { a=[...a]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]} return a; };
+S.praiseBag = shuffle(PRAISE);
+const app = document.getElementById("app");
+const h = s => app.innerHTML = s;
+
+// ===== 画面 =====
+function screenStart(){
+  h(`<div class="card">
+    <h1>動物当てゲーム</h1>
+    <p>コンピュータが心の中で1つの動物を選んでいます。あなたは「はい／いいえ」で答えられる質問を${N_ROUNDS}回して、その動物を当ててください。</p>
+    <p>毎回、3つの質問の中から1つを選んで聞きます。なるべく答えを絞り込めそうな質問を選んでください。</p>
+    <p style="margin-top:16px">学籍番号</p>
+    <input type="text" id="sid" autocomplete="off" inputmode="text" placeholder="例：A123456">
+    <p class="err hidden" id="err">学籍番号を入力してください。</p>
+    <p style="margin-top:16px"><button class="primary" id="go">次へ</button></p>
+  </div>`);
+  document.getElementById("go").onclick = () => {
+    const v = document.getElementById("sid").value.trim();
+    if(!v){document.getElementById("err").classList.remove("hidden");return;}
+    S.id = v; screenInstr();
+  };
+}
+
+function screenInstr(){
+  h(`<div class="card">
+    <h2>コンピュータからのコメントについて</h2>
+    <div class="robot"><div class="face">🖥️</div><div class="bubble">${INSTR[S.cond]}</div></div>
+    <p class="sub">この説明はあとで確認の質問があります。よく読んでから始めてください。</p>
+    <p><button class="primary" id="go">ゲームを始める</button></p>
+  </div>`);
+  document.getElementById("go").onclick = () => { S.tStart = Date.now(); nextRound(); };
+}
+
+function nextRound(){
+  if(S.round >= N_ROUNDS){ screenGuess(); return; }
+  const remain = Q.filter(q => !S.asked.includes(q.k));
+  S.options = shuffle(remain).slice(0, N_CHOICES);
+  S.t0 = Date.now();
+  renderRound(null);
+}
+
+function histHTML(){
+  if(!S.hist.length) return "";
+  return `<p class="sub" style="margin-top:14px">これまでの質問</p><ol class="hist">${
+    S.hist.map(x=>`<li>${x.t.replace("それは","").replace("ですか？","").replace("ますか？","").replace("せんか？","せんか")} → <b>${x.a?"はい":"いいえ"}</b></li>`).join("")
+  }</ol>`;
+}
+
+function renderRound(fb){
+  const pct = (S.round / N_ROUNDS) * 100;
+  let body;
+  if(!fb){
+    body = `<h2>質問 ${S.round+1} / ${N_ROUNDS}</h2>
+      <p class="sub">どれを聞きますか？</p>
+      ${S.options.map((q,i)=>`<button class="qbtn" data-i="${i}">${q.t}</button>`).join("")}`;
+  } else {
+    body = `<h2>質問 ${S.round} / ${N_ROUNDS}</h2>
+      <p>${fb.q}</p>
+      <div class="robot"><div class="face">🖥️</div><div class="bubble">
+        <div class="answer">${fb.a ? "はい" : "いいえ"}</div>
+        <div class="praise">${fb.c}</div>
+      </div></div>
+      <button class="primary" id="nx">${S.round>=N_ROUNDS ? "答えを選ぶ" : "次の質問へ"}</button>`;
+  }
+  h(`<div class="card"><div class="progress"><div style="width:${pct}%"></div></div>${body}${histHTML()}</div>`);
+  if(!fb){
+    app.querySelectorAll(".qbtn").forEach(b => b.onclick = () => ask(S.options[+b.dataset.i]));
+  } else {
+    document.getElementById("nx").onclick = nextRound;
+  }
+}
+
+function ask(q){
+  const a = !!A[S.target][q.k];
+  const rt = Date.now() - S.t0;
+  S.asked.push(q.k);
+  S.hist.push({k:q.k, t:q.t, a, rt});
+  S.round++;
+  let c;
+  if(S.cond === "generic") c = GENERIC;
+  else { if(!S.praiseBag.length) S.praiseBag = shuffle(PRAISE); c = S.praiseBag.pop(); }
+  renderRound({q:q.t, a, c});
+}
+
+function screenGuess(){
+  h(`<div class="card">
+    <h2>コンピュータが選んだ動物はどれ？</h2>
+    <div class="grid">${animals.map(n=>`<button data-n="${n}"><div style="font-size:1.6rem">${EMOJI[n]}</div><div style="font-size:.8rem">${n}</div></button>`).join("")}</div>
+    <p style="margin-top:16px"><button class="primary" id="go" disabled>これにする</button></p>
+    ${histHTML()}
+  </div>`);
+  const btns = app.querySelectorAll(".grid button");
+  btns.forEach(b => b.onclick = () => {
+    btns.forEach(x=>x.classList.remove("sel")); b.classList.add("sel");
+    S.guess = b.dataset.n; document.getElementById("go").disabled = false;
+  });
+  document.getElementById("go").onclick = screenQ;
+}
+
+const ITEMS = [
+  {k:"enjoy",   t:"このゲームは楽しかった"},
+  {k:"self",    t:"自分はこのゲームでうまくやれたと思う"},
+  {k:"correct", t:"自分の答えは正解していると思う"},
+  {k:"compet",  t:"このコンピュータは有能だと思う"},
+  {k:"like",    t:"このコンピュータに好感をもった"},
+  {k:"again",   t:"このコンピュータとまた遊びたい"},
+  {k:"based",   t:"コンピュータのコメントは、自分の質問の内容にもとづいていたと思う"},
+];
+
+function screenQ(){
+  h(`<div class="card">
+    <h2>アンケート</h2>
+    <p class="sub">正解は回答のあとに表示されます。あてはまるものを選んでください。</p>
+    ${ITEMS.map(it=>`<div class="item"><div>${it.t}</div>
+      <div class="scale">${[1,2,3,4,5,6,7].map(v=>`<label><input type="radio" name="${it.k}" value="${v}">${v}</label>`).join("")}</div>
+      <div class="ends"><span>まったくあてはまらない</span><span>とてもあてはまる</span></div></div>`).join("")}
+    <div class="item"><div>最初の説明では、コンピュータのコメントはどういうものだと書かれていましたか？</div>
+      <label class="opt"><input type="radio" name="check" value="sincere">質問を分析した評価</label>
+      <label class="opt"><input type="radio" name="check" value="flattery">質問とは関係ないランダムなコメント</label>
+      <label class="opt"><input type="radio" name="check" value="generic">評価はなく、次へ進む案内だけ</label>
+    </div>
+    <p class="err hidden" id="err">すべての項目に回答してください。</p>
+    <p><button class="primary" id="go">送信する</button></p>
+  </div>`);
+  document.getElementById("go").onclick = () => {
+    const get = n => (app.querySelector(`input[name="${n}"]:checked`)||{}).value;
+    const r = {}; let ok = true;
+    ITEMS.forEach(it => { const v = get(it.k); if(!v) ok=false; r[it.k] = v ? +v : null; });
+    const ch = get("check"); if(!ch) ok = false;
+    if(!ok){ document.getElementById("err").classList.remove("hidden"); return; }
+    S.ratings = r; S.check = ch; finish();
+  };
+}
+
+function record(){
+  return {
+    timestamp: new Date().toISOString(),
+    student_id: S.id,
+    condition: S.cond,
+    target: S.target,
+    guess: S.guess,
+    correct: S.guess === S.target ? 1 : 0,
+    ...S.ratings,
+    check: S.check,
+    check_ok: S.check === S.cond ? 1 : 0,
+    questions: S.hist.map(x=>x.k).join("|"),
+    answers: S.hist.map(x=>x.a?1:0).join(""),
+    mean_rt_ms: Math.round(S.hist.reduce((s,x)=>s+x.rt,0)/S.hist.length),
+    total_sec: Math.round((Date.now()-S.tStart)/1000),
+    ua: navigator.userAgent.slice(0,120),
+  };
+}
+
+function finish(){
+  const d = record();
+  const ok = d.correct === 1;
+  const reveal = `<div class="card">
+    <h2>${ok ? "正解！" : "残念…"}</h2>
+    <p>コンピュータが選んでいたのは <b>${EMOJI[S.target]} ${S.target}</b> でした。${ok?"":`（あなたの答え：${S.guess}）`}</p>
+    <p class="sub" id="status">送信中…</p>
+    <div id="local"></div>
+  </div>`;
+  h(reveal);
+  const status = document.getElementById("status");
+  const showLocal = (msg) => {
+    status.textContent = msg;
+    const keys = Object.keys(d);
+    const csv = keys.join(",") + "\n" + keys.map(k=>`"${String(d[k]).replace(/"/g,'""')}"`).join(",");
+    document.getElementById("local").innerHTML =
+      `<p class="sub">以下の結果を先生の指示にしたがって提出してください。</p>
+       <textarea rows="5" readonly>${JSON.stringify(d)}</textarea>
+       <p><button id="cp">コピー</button> <button id="dl">CSVを保存</button></p>`;
+    document.getElementById("cp").onclick = () => navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(d));
+    document.getElementById("dl").onclick = () => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));
+      a.download = `flattery_${S.id}.csv`; a.click();
+    };
+  };
+  if(!GAS_URL){ showLocal("（送信先が未設定です）"); return; }
+  fetch(GAS_URL, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(d)})
+    .then(() => { status.textContent = "送信しました。ご協力ありがとうございました。"; })
+    .catch(() => showLocal("送信に失敗しました。"));
+}
+
+screenStart();
+</script>
+</body>
+</html>
